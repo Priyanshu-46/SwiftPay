@@ -1,0 +1,188 @@
+name: SwiftPay CI/CD
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main]
+
+env:
+  JAVA_VERSION: "21"
+  REGISTRY: ghcr.io
+  IMAGE_PREFIX: ${{ github.repository_owner }}/swiftpay
+
+jobs:
+  # ── Job 1: Build & Test ────────────────────────────────────────────────────
+  build-and-test:
+    name: Build & Test (${{ matrix.service }})
+    runs-on: ubuntu-latest
+
+    strategy:
+      matrix:
+        service: [transaction-gateway, ledger-service, analytics-worker]
+      fail-fast: false
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Java ${{ env.JAVA_VERSION }}
+        uses: actions/setup-java@v4
+        with:
+          java-version: ${{ env.JAVA_VERSION }}
+          distribution: temurin
+          cache: maven
+
+      - name: Build & run tests
+        working-directory: ./${{ matrix.service }}
+        run: mvn verify -B --no-transfer-progress
+
+      - name: Upload test reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results-${{ matrix.service }}
+          path: ./${{ matrix.service }}/target/surefire-reports/
+          retention-days: 7
+
+      - name: Upload coverage report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-${{ matrix.service }}
+          path: ./${{ matrix.service }}/target/site/jacoco/
+          retention-days: 7
+
+  # ── Job 2: Docker Build & Push ─────────────────────────────────────────────
+  docker:
+    name: Docker Build & Push (${{ matrix.service }})
+    runs-on: ubuntu-latest
+    needs: build-and-test
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+
+    permissions:
+      contents: read
+      packages: write
+
+    strategy:
+      matrix:
+        service: [transaction-gateway, ledger-service, analytics-worker]
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Java ${{ env.JAVA_VERSION }} (for JAR build)
+        uses: actions/setup-java@v4
+        with:
+          java-version: ${{ env.JAVA_VERSION }}
+          distribution: temurin
+          cache: maven
+
+      - name: Build JAR (skip tests — already ran)
+        working-directory: ./${{ matrix.service }}
+        run: mvn package -DskipTests -B --no-transfer-progress
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract Docker metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}-${{ matrix.service }}
+          tags: |
+            type=sha,prefix=sha-
+            type=raw,value=latest
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v5
+        with:
+          context: ./${{ matrix.service }}
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  # ── Job 3: Integration smoke test ──────────────────────────────────────────
+  integration-smoke:
+    name: Integration smoke test
+    runs-on: ubuntu-latest
+    needs: build-and-test
+    if: github.event_name == 'pull_request'
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Java ${{ env.JAVA_VERSION }}
+        uses: actions/setup-java@v4
+        with:
+          java-version: ${{ env.JAVA_VERSION }}
+          distribution: temurin
+          cache: maven
+
+      - name: Build all JARs
+        run: |
+          for svc in transaction-gateway ledger-service analytics-worker; do
+            mvn package -DskipTests -B --no-transfer-progress -f $svc/pom.xml
+          done
+
+      - name: Start full stack
+        run: docker compose up -d --build
+        timeout-minutes: 10
+
+      - name: Wait for services to be healthy
+        run: |
+          echo "Waiting for services..."
+          for i in $(seq 1 30); do
+            TG=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:8080/actuator/health || echo "000")
+            LS=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:8081/actuator/health || echo "000")
+            if [ "$TG" = "200" ] && [ "$LS" = "200" ]; then
+              echo "All services healthy"
+              exit 0
+            fi
+            echo "Attempt $i: TG=$TG LS=$LS — retrying in 5s..."
+            sleep 5
+          done
+          echo "Services did not become healthy in time"
+          docker compose logs
+          exit 1
+
+      - name: Run end-to-end smoke test
+        run: |
+          # Initiate a payment between seeded accounts
+          RESPONSE=$(curl -s -X POST http://localhost:8080/v1/payments \
+            -H "Content-Type: application/json" \
+            -H "Idempotency-Key: smoke-test-$(date +%s)" \
+            -H "X-Request-ID: smoke-req-001" \
+            -d '{
+              "sender_id":   "a0000000-0000-0000-0000-000000000001",
+              "receiver_id": "a0000000-0000-0000-0000-000000000002",
+              "amount":      "50.00",
+              "currency":    "USD"
+            }')
+
+          echo "Response: $RESPONSE"
+
+          STATUS=$(echo "$RESPONSE" | python3 -c "import sys,json; print(json.load(sys.stdin)['status'])" 2>/dev/null || echo "UNKNOWN")
+          echo "Payment status: $STATUS"
+
+          if [ "$STATUS" = "PENDING" ] || [ "$STATUS" = "COMPLETED" ]; then
+            echo "Smoke test PASSED"
+          else
+            echo "Smoke test FAILED"
+            exit 1
+          fi
+
+      - name: Tear down
+        if: always()
+        run: docker compose down -v

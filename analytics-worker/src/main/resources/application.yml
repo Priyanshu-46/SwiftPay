@@ -1,0 +1,42 @@
+server:
+  port: 8082
+
+spring:
+  application:
+    name: analytics-worker
+
+  datasource:
+    url: ${DB_URL:jdbc:postgresql://localhost:5432/analytics_db}
+    username: ${DB_USER:postgres}
+    password: ${DB_PASS:#Princu1}
+    hikari:
+      maximum-pool-size: 10
+
+  jpa:
+    hibernate:
+      ddl-auto: validate
+    show-sql: false
+
+  flyway:
+    enabled: true
+    locations: classpath:db/migration
+
+  kafka:
+    bootstrap-servers: ${KAFKA_BROKERS:localhost:9092}
+    consumer:
+      group-id: analytics-worker-group
+      auto-offset-reset: earliest
+      key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+      value-deserializer: org.springframework.kafka.support.serializer.JsonDeserializer
+      properties:
+        spring.json.trusted.packages: com.swiftpay.*
+
+kafka:
+  topics:
+    payment-completed: payment.completed
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,metrics
