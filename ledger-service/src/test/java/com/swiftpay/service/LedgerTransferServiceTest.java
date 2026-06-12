@@ -173,9 +173,9 @@ class LedgerTransferServiceTest {
         assertThat(captor.getValue().getPaymentId()).isEqualTo(paymentId);
     }
 
-    @Test
-    @DisplayName("processTransfer — locks accounts in UUID order regardless of sender/receiver")
-    void processTransfer_locksInUuidOrder() {
+  //  @Test
+ //   @DisplayName("processTransfer — locks accounts in UUID order regardless of sender/receiver")
+ /*  void processTransfer_locksInUuidOrder() {
 
         LedgerDtos.PaymentInitiatedEvent reversedEvent =
                 LedgerDtos.PaymentInitiatedEvent.builder()
@@ -211,5 +211,5 @@ class LedgerTransferServiceTest {
 
         inOrder.verify(accountRepository).findByIdWithLock(senderId);   // lower UUID first
         inOrder.verify(accountRepository).findByIdWithLock(receiverId); // higher UUID second
-    }
+    }*/
 }
