@@ -13,6 +13,7 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
+import org.mockito.InOrder;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
@@ -173,21 +174,42 @@ class LedgerTransferServiceTest {
     }
 
     @Test
-    @DisplayName("processTransfer — locks accounts in UUID order regardless of which is sender")
+    @DisplayName("processTransfer — locks accounts in UUID order regardless of sender/receiver")
     void processTransfer_locksInUuidOrder() {
-        // Swap: receiver (90...) > sender (10...) — order should still be 10... first
+
+        LedgerDtos.PaymentInitiatedEvent reversedEvent =
+                LedgerDtos.PaymentInitiatedEvent.builder()
+                        .paymentId(paymentId)
+                        .senderId(receiverId)   // higher UUID
+                        .receiverId(senderId)   // lower UUID
+                        .amount(new BigDecimal("100.00"))
+                        .currency("USD")
+                        .idempotencyKey("idem-key-001")
+                        .initiatedAt(Instant.now())
+                        .build();
+
         when(processedPaymentRepository.existsByPaymentId(paymentId)).thenReturn(false);
-        when(accountRepository.findByIdWithLock(senderId)).thenReturn(Optional.of(sender));
-        when(accountRepository.findByIdWithLock(receiverId)).thenReturn(Optional.of(receiver));
-        when(accountRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
-        when(ledgerEntryRepository.saveAll(any())).thenAnswer(inv -> inv.getArgument(0));
-        when(processedPaymentRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
 
-        ledgerTransferService.processTransfer(event);
+        when(accountRepository.findByIdWithLock(senderId))
+                .thenReturn(Optional.of(sender));
 
-        // Verify locks acquired in UUID-ascending order
-        var orderVerifier = inOrder(accountRepository);
-        orderVerifier.verify(accountRepository).findByIdWithLock(senderId);   // 10... first
-        orderVerifier.verify(accountRepository).findByIdWithLock(receiverId); // 90... second
+        when(accountRepository.findByIdWithLock(receiverId))
+                .thenReturn(Optional.of(receiver));
+
+        when(accountRepository.save(any()))
+                .thenAnswer(inv -> inv.getArgument(0));
+
+        when(ledgerEntryRepository.saveAll(any()))
+                .thenAnswer(inv -> inv.getArgument(0));
+
+        when(processedPaymentRepository.save(any()))
+                .thenAnswer(inv -> inv.getArgument(0));
+
+        ledgerTransferService.processTransfer(reversedEvent);
+
+        InOrder inOrder = inOrder(accountRepository);
+
+        inOrder.verify(accountRepository).findByIdWithLock(senderId);   // lower UUID first
+        inOrder.verify(accountRepository).findByIdWithLock(receiverId); // higher UUID second
     }
 }
