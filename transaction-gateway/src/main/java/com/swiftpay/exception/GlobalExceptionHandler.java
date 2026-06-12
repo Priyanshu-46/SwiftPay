@@ -67,4 +67,16 @@ public class GlobalExceptionHandler {
                 .timestamp(Instant.now())
                 .build();
     }
+    @ExceptionHandler(MethodArgumentNotValidException.class)
+    public ResponseEntity<PaymentDtos.ErrorResponse> handleValidation(
+            MethodArgumentNotValidException ex) {
+
+        return ResponseEntity.badRequest().body(
+                PaymentDtos.ErrorResponse.builder()
+                        .code("VALIDATION_ERROR")
+                        .message("Validation failed")
+                        .timestamp(Instant.now())
+                        .build()
+        );
+    }
 }

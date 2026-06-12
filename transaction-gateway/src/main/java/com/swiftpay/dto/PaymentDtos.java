@@ -62,6 +62,7 @@ public class PaymentDtos {
         private String status;
 
         @JsonProperty("idempotency_key")
+        @NotBlank(message = "Idempotency-Key header is required")
         private String idempotencyKey;
 
         @JsonProperty("created_at")
