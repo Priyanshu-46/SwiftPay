@@ -3,8 +3,10 @@ package com.swiftpay.model;
 import jakarta.persistence.*;
 import lombok.*;
 import org.hibernate.annotations.CreationTimestamp;
+import org.hibernate.annotations.JdbcType;
 import org.hibernate.annotations.JdbcTypeCode;
 import org.hibernate.annotations.Type;
+import org.hibernate.dialect.PostgreSQLEnumJdbcType;
 import org.hibernate.type.SqlTypes;
 
 import java.math.BigDecimal;
@@ -33,7 +35,7 @@ public class LedgerEntry {
 
     @Enumerated(EnumType.STRING)
     @Column(name = "entry_type", nullable = false)
-    @JdbcTypeCode(SqlTypes.NAMED_ENUM)
+    @JdbcType(PostgreSQLEnumJdbcType.class)
     private EntryType entryType;
 
     @Column(nullable = false, precision = 19, scale = 4)
