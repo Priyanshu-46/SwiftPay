@@ -4,6 +4,8 @@ import jakarta.persistence.*;
 import lombok.*;
 import org.hibernate.annotations.CreationTimestamp;
 import org.hibernate.annotations.JdbcTypeCode;
+import org.hibernate.annotations.Type;
+import org.hibernate.type.SqlTypes;
 
 import java.math.BigDecimal;
 import java.sql.Types;
@@ -31,6 +33,7 @@ public class LedgerEntry {
 
     @Enumerated(EnumType.STRING)
     @Column(name = "entry_type", nullable = false)
+    @JdbcTypeCode(SqlTypes.NAMED_ENUM)
     private EntryType entryType;
 
     @Column(nullable = false, precision = 19, scale = 4)
